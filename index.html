@@ -6,6 +6,7 @@
 <title>Nextt Hub</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -311,9 +312,37 @@ const INIT_CLIENT_SPACES=[
   {id:2,name:'Empresa Beta',logoUrl:'',color:'#4A7FB5',projectId:2,parceiro:'Carlos Parceiro',cliente:'Empresa Beta',desc:'Lançamento produto Beta'},
 ];
 
-// ── LOCALSTORAGE ──────────────────────────────────────────────────────────
+// ── SUPABASE + LOCALSTORAGE SYNC ──────────────────────────────────────────
+const SUPA_URL='https://sbyfykvoqonnigtpguep.supabase.co';
+const SUPA_KEY='sb_publishable_wQ_cPV8W1Yvcm-SHEIEVyw_G92Xj45y';
+const supa=supabase.createClient(SUPA_URL,SUPA_KEY);
+
+// LocalStorage as cache, Supabase as source of truth
 function lsGet(key,def){try{const v=localStorage.getItem('nextt_'+key);return v?JSON.parse(v):def;}catch{return def;}}
-function lsSet(key,val){try{localStorage.setItem('nextt_'+key,JSON.stringify(val));}catch{}}
+function lsSet(key,val){
+  try{localStorage.setItem('nextt_'+key,JSON.stringify(val));}catch{}
+  // Sync to Supabase in background
+  supaSync(key,val);
+}
+
+async function supaSync(key,val){
+  try{
+    await supa.from('kv_store').upsert({key,value:JSON.stringify(val),updated_at:new Date().toISOString()},{onConflict:'key'});
+  }catch(e){console.warn('Supabase sync failed:',e);}
+}
+
+async function supaLoad(){
+  try{
+    const {data}=await supa.from('kv_store').select('key,value');
+    if(data&&data.length>0){
+      data.forEach(row=>{
+        try{localStorage.setItem('nextt_'+row.key,row.value);}catch{}
+      });
+      return true;
+    }
+  }catch(e){console.warn('Supabase load failed:',e);}
+  return false;
+}
 
 // ── SMALL REUSABLE COMPONENTS ──────────────────────────────────────────────
 function Modal({title,onClose,maxWidth,children}){
@@ -2246,7 +2275,7 @@ const DFLT_PERMS={
 function App(){
   const [u,setU]=useState(()=>lsGet('session',null));
   const [users,setUsers]=useState(()=>{
-    const APP_VER='nextt_v3';
+    const APP_VER='nextt_v4';
     const ver=localStorage.getItem('nextt_app_ver');
     if(ver!==APP_VER){
       // New version - reset users but keep other data
@@ -2299,7 +2328,13 @@ function App(){
   return h(AdminPortal,{user:u,onLogout:logout,sharedEvs,setSharedEvs:saveEvs,sharedFlows,setSharedFlows:saveFlows,perms,setPerms:savePerms,sharedCts,sharedGoals,sharedFinancas,sharedClientSpaces,appUsers:users,setAppUsersExt:saveUsers});
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(h(App,null));
+// Load from Supabase before rendering
+(async function init(){
+  const loader=document.getElementById('root');
+  loader.innerHTML='<div style="min-height:100vh;background:#050D1A;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px"><div style="width:48px;height:48px;border:3px solid #C9A96E33;border-top-color:#C9A96E;border-radius:50%;animation:spin 1s linear infinite"></div><div style="color:#C9A96E;font-size:14px;font-family:sans-serif">Carregando Nextt Hub...</div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+  await supaLoad();
+  ReactDOM.createRoot(document.getElementById('root')).render(h(App,null));
+})();
 </script>
 </body>
 </html>
