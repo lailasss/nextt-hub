@@ -319,10 +319,11 @@ const supa=supabase.createClient(SUPA_URL,SUPA_KEY);
 
 // LocalStorage as cache, Supabase as source of truth
 function lsGet(key,def){try{const v=localStorage.getItem('nextt_'+key);return v?JSON.parse(v):def;}catch{return def;}}
+let _syncEnabled=false; // Will be enabled after init
 function lsSet(key,val){
   try{localStorage.setItem('nextt_'+key,JSON.stringify(val));}catch{}
-  // Sync to Supabase in background
-  supaSync(key,val);
+  // Only sync to Supabase after initial load is complete
+  if(_syncEnabled) supaSync(key,val);
 }
 
 async function supaSync(key,val){
@@ -331,18 +332,7 @@ async function supaSync(key,val){
   }catch(e){console.warn('Supabase sync failed:',e);}
 }
 
-async function supaLoad(){
-  try{
-    const {data}=await supa.from('kv_store').select('key,value');
-    if(data&&data.length>0){
-      data.forEach(row=>{
-        try{localStorage.setItem('nextt_'+row.key,row.value);}catch{}
-      });
-      return true;
-    }
-  }catch(e){console.warn('Supabase load failed:',e);}
-  return false;
-}
+// supaLoad inlined in init()
 
 // ── SMALL REUSABLE COMPONENTS ──────────────────────────────────────────────
 function Modal({title,onClose,maxWidth,children}){
@@ -2332,7 +2322,31 @@ function App(){
 (async function init(){
   const loader=document.getElementById('root');
   loader.innerHTML='<div style="min-height:100vh;background:#050D1A;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px"><div style="width:48px;height:48px;border:3px solid #C9A96E33;border-top-color:#C9A96E;border-radius:50%;animation:spin 1s linear infinite"></div><div style="color:#C9A96E;font-size:14px;font-family:sans-serif">Carregando Nextt Hub...</div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
-  await supaLoad();
+  
+  // Load ALL data from Supabase FIRST before React initializes
+  try{
+    const {data,error}=await supa.from('kv_store').select('key,value');
+    if(error) console.warn('Supabase error:',error);
+    if(data&&data.length>0){
+      // Cloud has data - load it all into localStorage
+      data.forEach(row=>{
+        try{
+          // Store with nextt_ prefix
+          localStorage.setItem('nextt_'+row.key, row.value);
+        }catch(e){}
+      });
+      // Mark version as current so APP_VER check doesn't reset
+      localStorage.setItem('nextt_app_ver','nextt_v4');
+      console.log('Loaded',data.length,'keys from Supabase');
+    } else {
+      console.log('No cloud data found - using local data');
+    }
+  }catch(e){
+    console.warn('Supabase connection failed, using local data:',e);
+  }
+  
+  // Enable Supabase sync now that initial load is complete
+  _syncEnabled = true;
   ReactDOM.createRoot(document.getElementById('root')).render(h(App,null));
 })();
 </script>
