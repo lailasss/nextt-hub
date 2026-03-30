@@ -321,16 +321,45 @@ const supa=supabase.createClient(SUPA_URL,SUPA_KEY);
 function lsGet(key,def){try{const v=localStorage.getItem('nextt_'+key);return v?JSON.parse(v):def;}catch{return def;}}
 let _syncEnabled=false; // Will be enabled after init
 function lsSet(key,val){
-  try{localStorage.setItem('nextt_'+key,JSON.stringify(val));}catch{}
+  const serialized=JSON.stringify(val);
+  try{localStorage.setItem('nextt_'+key,serialized);}catch{}
   // Only sync to Supabase after initial load is complete
-  if(_syncEnabled) supaSync(key,val);
+  if(_syncEnabled) supaSync(key,serialized);
 }
 
 async function supaSync(key,val){
   try{
-    await supa.from('kv_store').upsert({key,value:JSON.stringify(val),updated_at:new Date().toISOString()},{onConflict:'key'});
+    const value=typeof val==='string'?val:JSON.stringify(val);
+    const {error}=await supa.from('kv_store').upsert({key,value,updated_at:new Date().toISOString()},{onConflict:'key'});
+    if(error)console.warn('Supabase sync error:',error);
   }catch(e){console.warn('Supabase sync failed:',e);}
 }
+
+async function forceSyncAll(){
+  const keys=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith('nextt_')&&k!=='nextt_app_ver'&&k!=='nextt_session'){
+      keys.push(k.replace('nextt_',''));
+    }
+  }
+  const rows=keys.map(key=>({
+    key,
+    value:localStorage.getItem('nextt_'+key),
+    updated_at:new Date().toISOString()
+  }));
+  if(rows.length===0){alert('Nenhum dado local para sincronizar.');return;}
+  try{
+    const {error}=await supa.from('kv_store').upsert(rows,{onConflict:'key'});
+    if(error)throw error;
+    alert('✅ Sincronizado! '+rows.length+' itens enviados para a nuvem.');
+  }catch(e){
+    alert('❌ Erro ao sincronizar: '+e.message);
+  }
+}
+
+// Make forceSyncAll available globally
+window.forceSyncAll=forceSyncAll;
 
 // supaLoad inlined in init()
 
@@ -2331,7 +2360,7 @@ function App(){
       // Cloud has data - load it all into localStorage
       data.forEach(row=>{
         try{
-          // Store with nextt_ prefix
+          // Store with nextt_ prefix (value is already JSON string)
           localStorage.setItem('nextt_'+row.key, row.value);
         }catch(e){}
       });
